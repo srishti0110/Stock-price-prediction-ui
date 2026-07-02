@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Stock Price Prediction</title>
+
+  <!-- Chart.js: a simple library that lets us draw line charts easily -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background-color: #f5f6fa;
+    }
+    h1 {
+      text-align: center;
+      color: #2c3e50;
+    }
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    select, button {
+      font-size: 16px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+    button {
+      background-color: #2980b9;
+      color: white;
+      border: none;
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    button:hover {
+      background-color: #1f618d;
+    }
+    #predictionResult {
+      font-size: 18px;
+      margin-top: 15px;
+    }
+    .price-up {
+      color: green;
+      font-weight: bold;
+    }
+    .price-down {
+      color: red;
+      font-weight: bold;
+    }
+    #loading {
+      color: #888;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>📈 Stock Price Prediction</h1>
+
+  <!-- ============== Card 1: Choose a company ============== -->
+  <div class="card">
+    <label for="companySelect"><b>Select a company:</b></label>
+    <select id="companySelect"></select>
+    <button onclick="loadHistoryAndPredict()">View History & Predict</button>
+    <p id="loading" style="display:none;">Loading data, please wait...</p>
+  </div>
+
+  <!-- ============== Card 2: Stock history chart ============== -->
+  <div class="card">
+    <h3>Stock History (Closing Price)</h3>
+    <canvas id="historyChart" height="120"></canvas>
+  </div>
+
+  <!-- ============== Card 3: Prediction result ============== -->
+  <div class="card">
+    <h3>Prediction</h3>
+    <div id="predictionResult">Pick a company above and click the button.</div>
+  </div>
+
+  <script>
+    // NOTE: every backend call now starts with "/api/" because on
+    // Vercel, our FastAPI server lives under the /api/ folder.
+
+    let myChart = null;
+
+    // ----------------------------------------------------------------
+    // STEP 1: Load the list of companies into the dropdown
+    // ----------------------------------------------------------------
+    async function loadCompanies() {
+      const response = await fetch("/api/companies");
+      const data = await response.json();
+
+      const select = document.getElementById("companySelect");
+      data.companies.forEach((company) => {
+        const option = document.createElement("option");
+        option.value = company;
+        option.textContent = company;
+        select.appendChild(option);
+      });
+    }
+
+    // ----------------------------------------------------------------
+    // STEP 2: Fetch history + prediction for the chosen company
+    // ----------------------------------------------------------------
+  async function loadHistoryAndPredict() {
+  const company = document.getElementById("companySelect").value;
+  const loadingText = document.getElementById("loading");
+  loadingText.style.display = "block";
+
+  try {
+    const [historyRes, predictRes] = await Promise.all([
+      fetch(`/api/history/${company}`),
+      fetch(`/api/predict/${company}`),
+    ]);
+
+    if (!historyRes.ok) throw new Error(`History request failed: ${historyRes.status}`);
+    if (!predictRes.ok) throw new Error(`Predict request failed: ${predictRes.status}`);
+
+    const history = await historyRes.json();
+    const prediction = await predictRes.json();
+
+    drawHistoryChart(history, prediction);
+    showPredictionResult(prediction);
+  } catch (error) {
+    document.getElementById("predictionResult").innerText =
+      "Something went wrong: " + error.message;
+  } finally {
+    loadingText.style.display = "none";
+  }
+}
+
+    // ----------------------------------------------------------------
+    // STEP 3: Draw the line chart (actual history + predicted point)
+    // ----------------------------------------------------------------
+    function drawHistoryChart(history, prediction) {
+      const ctx = document.getElementById("historyChart").getContext("2d");
+
+      if (myChart !== null) {
+        myChart.destroy();
+      }
+
+      const labels = [...history.dates, "Tomorrow (Predicted)"];
+      const actualPrices = [...history.close, null];
+
+      const predictedPrices = history.close.map(() => null);
+      predictedPrices.push(prediction.predicted_next_close);
+
+      myChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: "Actual Closing Price",
+              data: actualPrices,
+              borderColor: "#2980b9",
+              backgroundColor: "rgba(41, 128, 185, 0.1)",
+              tension: 0.1,
+            },
+            {
+              label: "Predicted Next Close",
+              data: predictedPrices,
+              borderColor: "#e67e22",
+              pointBackgroundColor: "#e67e22",
+              pointRadius: 6,
+              showLine: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { ticks: { maxTicksLimit: 10 } },
+          },
+        },
+      });
+    }
+
+    // ----------------------------------------------------------------
+    // STEP 4: Show the prediction as text below the chart
+    // ----------------------------------------------------------------
+    function showPredictionResult(prediction) {
+      const resultBox = document.getElementById("predictionResult");
+
+      const goingUp = prediction.predicted_next_close > prediction.last_known_close;
+      const arrow = goingUp ? "⬆️" : "⬇️";
+      const cssClass = goingUp ? "price-up" : "price-down";
+
+      resultBox.innerHTML = `
+        <p><b>Company:</b> ${prediction.company}</p>
+        <p><b>Last known date:</b> ${prediction.last_known_date}</p>
+        <p><b>Last known closing price:</b> $${prediction.last_known_close}</p>
+        <p><b>Predicted next closing price:</b>
+          <span class="${cssClass}">$${prediction.predicted_next_close} ${arrow}</span>
+        </p>
+      `;
+    }
+
+    loadCompanies();
+  </script>
+
+</body>
+</html>
